@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+venv_rag/
+ENV/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Hassas dosyalar
+*.pdf
+temp.pdf
+*.env
+.env
+
+# API Keys
+*_key.txt
+api_keys/
+
+# Model cache
+.cache/
+models/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test dosyaları
+test_*.py
+download_model.py
