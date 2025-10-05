@@ -16,6 +16,7 @@ venv\Scripts\activate   # Windows
 source venv/bin/activate  # Mac/Linux
 pip install -r requirements.txt
 streamlit run app.py
-![Görsel](img width="1533" height="853" alt="image" src="https://github.com/user-attachments/assets/63cae1d5-ef24-44eb-8769-0a7db3503065" )
+![Görsel](https://github.com/user-attachments/assets/63cae1d5-ef24-44eb-8769-0a7db3503065)
+
 
 
