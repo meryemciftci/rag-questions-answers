@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import warnings
+from datetime import datetime
 warnings.filterwarnings("ignore")
 
 st.set_page_config(
@@ -10,14 +11,49 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Custom CSS
+st.markdown("""
+<style>
+    .user-message {
+        background-color: #e3f2fd;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+        border-left: 4px solid #2196F3;
+    }
+    .assistant-message {
+        background-color: #f5f5f5;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+        border-left: 4px solid #4CAF50;
+    }
+    .source-box {
+        background-color: #fff9e6;
+        padding: 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+        font-size: 0.9em;
+    }
+    .stButton>button {
+        width: 100%;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("📚 RAG Soru-Cevap Sistemi")
+st.markdown("*PDF dokümanlarınızı yükleyin ve sorular sorun*")
 st.markdown("---")
 
-# Session state
+# Session state initialization
 if 'vectorstore' not in st.session_state:
     st.session_state.vectorstore = None
 if 'qa_chain' not in st.session_state:
     st.session_state.qa_chain = None
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'pdf_name' not in st.session_state:
+    st.session_state.pdf_name = None
 
 # Sidebar
 with st.sidebar:
@@ -26,15 +62,17 @@ with st.sidebar:
     groq_api_key = st.text_input(
         "🔑 Groq API Key",
         type="password",
-        placeholder="gsk_..."
+        placeholder="gsk_...",
+        help="Groq API anahtarınızı girin"
     )
     
     if groq_api_key:
         os.environ["GROQ_API_KEY"] = groq_api_key
-        st.success("✅ API Key OK")
+        st.success("✅ API Key ayarlandı")
     
     st.markdown("---")
     
+    # PDF Upload Section
     if groq_api_key:
         st.subheader("📄 PDF Yükle")
         
@@ -44,12 +82,15 @@ with st.sidebar:
         
         if uploaded_file:
             file_size_mb = uploaded_file.size / (1024 * 1024)
-            st.info(f"📊 Dosya boyutu: {file_size_mb:.2f} MB")
+            st.info(f"📊 Dosya: {uploaded_file.name}")
+            st.info(f"📏 Boyut: {file_size_mb:.2f} MB")
             
             if file_size_mb > 50:
-                st.warning("⚠️ Büyük dosya! İşlem biraz uzun sürebilir.")
+                st.warning("⚠️ Büyük dosya! İşlem uzun sürebilir.")
             
-            if st.button("🚀 İşle", type="primary"):
+            process_btn = st.button("🚀 PDF'i İşle", type="primary", use_container_width=True)
+            
+            if process_btn:
                 progress = st.progress(0)
                 status = st.empty()
                 
@@ -61,23 +102,24 @@ with st.sidebar:
                     from langchain.chains import RetrievalQA
                     from langchain.prompts import PromptTemplate
                     
-                    # PDF kaydet
-                    status.text("1/5 PDF kaydediliyor...")
+                    # Step 1: Save PDF
+                    status.text("1/5 📥 PDF kaydediliyor...")
                     progress.progress(20)
                     with open("temp.pdf", "wb") as f:
                         f.write(uploaded_file.getbuffer())
                     
-                    # PDF oku
-                    status.text("2/5 PDF okunuyor...")
+                    # Step 2: Load PDF
+                    status.text("2/5 📖 PDF okunuyor...")
                     progress.progress(40)
                     loader = PyPDFLoader("temp.pdf")
                     documents = loader.load()
                     st.info(f"✅ {len(documents)} sayfa okundu")
                     
-                    # Parçala
-                    status.text("3/5 Parçalanıyor...")
+                    # Step 3: Split documents
+                    status.text("3/5 ✂️ Parçalara ayrılıyor...")
                     progress.progress(60)
                     
+                    # Dynamic chunk size based on file size
                     if file_size_mb > 20:
                         chunk_size = 1200
                         chunk_overlap = 150
@@ -90,13 +132,14 @@ with st.sidebar:
                     
                     splitter = RecursiveCharacterTextSplitter(
                         chunk_size=chunk_size,
-                        chunk_overlap=chunk_overlap
+                        chunk_overlap=chunk_overlap,
+                        separators=["\n\n", "\n", " ", ""]
                     )
                     chunks = splitter.split_documents(documents)
-                    st.info(f"✅ {len(chunks)} parça oluşturuldu (chunk size: {chunk_size})")
+                    st.info(f"✅ {len(chunks)} parça oluşturuldu")
                     
-                    # BURADA DEĞİŞİKLİK - Sentence Transformers dene, yoksa TF-IDF
-                    status.text("4/5 Embedding modeli yükleniyor...")
+                    # Step 4: Create embeddings
+                    status.text("4/5 🧠 Embedding modeli yükleniyor...")
                     progress.progress(75)
                     
                     try:
@@ -131,10 +174,10 @@ with st.sidebar:
                                 return embedding[0].tolist()
                         
                         embeddings = SentenceTransformerEmbeddings()
-                        st.info("✅ Sentence Transformers (semantic search)")
+                        st.success("✅ Sentence Transformers yüklendi (Semantic Search)")
                         
                     except Exception as e:
-                        st.warning("Sentence-transformers yüklenemedi, TF-IDF kullanılıyor")
+                        st.warning("⚠️ Sentence-transformers yüklenemedi, TF-IDF kullanılıyor")
                         
                         from sklearn.feature_extraction.text import TfidfVectorizer
                         from langchain.embeddings.base import Embeddings
@@ -158,22 +201,23 @@ with st.sidebar:
                                 return vector[0].tolist()
                         
                         embeddings = SimpleEmbeddings()
-                        st.info("✅ TF-IDF (yedek)")
+                        st.info("✅ TF-IDF kullanılıyor")
                     
-                    # Vector store
+                    # Create vector store
                     vectorstore = FAISS.from_documents(chunks, embeddings)
                     st.session_state.vectorstore = vectorstore
                     
-                    # LLM
-                    status.text("5/5 LLM hazırlanıyor...")
+                    # Step 5: Setup LLM and QA Chain
+                    status.text("5/5 🤖 LLM hazırlanıyor...")
                     progress.progress(90)
+                    
                     llm = ChatGroq(
                         model="llama-3.3-70b-versatile",
                         temperature=0.2
                     )
                     
                     prompt = PromptTemplate(
-                        template="""Sen bir uzman asistansın. Sadece verilen bağlam içindeki bilgileri kullan.
+                        template="""Sen bir uzman asistansın. Sadece verilen bağlam içindeki bilgileri kullanarak cevap ver.
 
 BAĞLAM:
 {context}
@@ -184,7 +228,7 @@ KURALLAR:
 - Sadece bağlamdaki bilgileri kullan
 - Bilgi yoksa "Bu bilgi dokümanda bulunmuyor" de
 - Türkçe, net ve anlaşılır cevap ver
-- Kaynak belirt
+- Mümkünse sayfa numarası belirt
 
 CEVAP:""",
                         input_variables=["context", "question"]
@@ -192,12 +236,16 @@ CEVAP:""",
                     
                     qa_chain = RetrievalQA.from_chain_type(
                         llm=llm,
-                        retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
+                        retriever=vectorstore.as_retriever(
+                            search_kwargs={"k": 3}
+                        ),
                         return_source_documents=True,
                         chain_type_kwargs={"prompt": prompt}
                     )
                     st.session_state.qa_chain = qa_chain
+                    st.session_state.pdf_name = uploaded_file.name
                     
+                    # Cleanup
                     if os.path.exists("temp.pdf"):
                         os.remove("temp.pdf")
                     
@@ -205,62 +253,152 @@ CEVAP:""",
                     status.empty()
                     progress.empty()
                     
-                    st.success(f"✅ Hazır! {len(chunks)} parça")
+                    st.success(f"✅ Sistem hazır! {len(chunks)} parça oluşturuldu")
                     st.balloons()
                     
+                    # Clear chat history on new PDF
+                    st.session_state.chat_history = []
+                    
                 except Exception as e:
-                    st.error(f"Hata: {str(e)}")
+                    st.error(f"❌ Hata: {str(e)}")
                     import traceback
-                    st.code(traceback.format_exc())
+                    with st.expander("Hata detayları"):
+                        st.code(traceback.format_exc())
     
+    # System status
+    st.markdown("---")
     if st.session_state.qa_chain:
-        st.markdown("---")
         st.success("✅ Sistem Aktif")
+        if st.session_state.pdf_name:
+            st.info(f"📄 {st.session_state.pdf_name}")
+        
+        # Clear chat button
+        if st.button("🗑️ Sohbeti Temizle", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
+        
+        # Stats
+        if st.session_state.chat_history:
+            st.markdown("---")
+            st.metric("Soru Sayısı", len(st.session_state.chat_history))
 
-# Ana alan
+# Main area
 if not groq_api_key:
-    st.info("👈 Groq API Key girin")
+    st.info("👈 Lütfen Groq API Key girin")
+    st.markdown("""
+    ### Nasıl API Key alınır?
+    1. [console.groq.com](https://console.groq.com) adresine gidin
+    2. Ücretsiz hesap oluşturun
+    3. API Keys bölümünden yeni key oluşturun
+    """)
+    
 elif not st.session_state.qa_chain:
-    st.info("👈 PDF yükleyip işleyin")
+    st.info("👈 Lütfen PDF yükleyip işleyin")
+    st.markdown("""
+    ### PDF formatında belge yükleyin
+    - Maksimum dosya boyutu: 500MB
+    - Önerilen: 50MB altı dosyalar daha hızlı işlenir
+    """)
+    
 else:
-    col1, col2 = st.columns([2, 1])
+    # Chat interface
+    st.subheader("💬 Sohbet")
+    
+    # Display chat history
+    chat_container = st.container()
+    with chat_container:
+        if st.session_state.chat_history:
+            for i, chat in enumerate(st.session_state.chat_history):
+                # User message
+                st.markdown(
+                    f"""<div class="user-message">
+                    <strong>👤 Sen:</strong><br>{chat['question']}
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+                
+                # Assistant message
+                st.markdown(
+                    f"""<div class="assistant-message">
+                    <strong>🤖 Asistan:</strong><br>{chat['answer']}
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+                
+                # Sources in expander
+                if chat.get('sources'):
+                    with st.expander(f"📚 Kaynaklar ({len(chat['sources'])} adet)"):
+                        for j, source in enumerate(chat['sources'], 1):
+                            page_num = source.metadata.get('page', 'N/A')
+                            st.markdown(f"""
+                            <div class="source-box">
+                            <strong>Kaynak {j} (Sayfa: {page_num})</strong><br>
+                            {source.page_content[:300]}...
+                            </div>
+                            """, unsafe_allow_html=True)
+                
+                st.markdown("---")
+        else:
+            st.info("👋 Merhaba! PDF'iniz hakkında soru sorabilirsiniz.")
+    
+    # Question input area
+    st.markdown("### 💭 Yeni Soru")
+    
+    col1, col2 = st.columns([4, 1])
     
     with col1:
-        st.subheader("💬 Soru")
-        
-        question = st.text_area(
+        question = st.text_input(
             "Sorunuz:",
-            height=100,
-            placeholder="Bu döküman ne hakkında?"
+            placeholder="Bu döküman ne hakkında?",
+            key="question_input",
+            label_visibility="collapsed"
         )
-        
-        if st.button("🔍 Cevap", type="primary"):
-            if question:
-                with st.spinner("Cevap hazırlanıyor..."):
-                    try:
-                        result = st.session_state.qa_chain.invoke({"query": question})
-                        
-                        st.markdown("### 💡 Cevap")
-                        st.success(result['result'])
-                        
-                        with st.expander("📄 Kaynaklar"):
-                            for i, doc in enumerate(result['source_documents'], 1):
-                                st.text(f"Kaynak {i}:\n{doc.page_content[:200]}...")
-                                st.markdown("---")
-                    except Exception as e:
-                        st.error(f"Hata: {e}")
-            else:
-                st.warning("Soru yazın")
     
     with col2:
-        st.subheader("📝 Örnekler")
-        examples = [
-            "Ne hakkında?",
-            "Özet çıkar",
-            "Ana konular?"
-        ]
-        for ex in examples:
-            st.button(ex, key=ex)
+        ask_button = st.button("🔍 Sor", type="primary", use_container_width=True)
+    
+    # Example questions
+    st.markdown("**💡 Örnek Sorular:**")
+    example_cols = st.columns(3)
+    
+    examples = [
+        "Bu döküman ne hakkında?",
+        "Ana konuları özetle",
+        "En önemli noktalar neler?"
+    ]
+    
+    example_clicked = None
+    for idx, ex in enumerate(examples):
+        with example_cols[idx]:
+            if st.button(ex, key=f"example_{idx}", use_container_width=True):
+                example_clicked = ex
+    
+    # Handle question (from input or example)
+    query = None
+    if ask_button and question:
+        query = question
+    elif example_clicked:
+        query = example_clicked
+    
+    if query:
+        with st.spinner("🤔 Düşünüyorum..."):
+            try:
+                result = st.session_state.qa_chain.invoke({"query": query})
+                
+                # Add to chat history
+                st.session_state.chat_history.append({
+                    'question': query,
+                    'answer': result['result'],
+                    'sources': result.get('source_documents', []),
+                    'timestamp': datetime.now().strftime("%H:%M:%S")
+                })
+                
+                # Rerun to show new message
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Hata oluştu: {str(e)}")
 
+# Footer
 st.markdown("---")
-st.caption("RAG Sistemi")
+st.caption("📚 RAG Soru-Cevap Sistemi | Powered by Groq + LangChain")
